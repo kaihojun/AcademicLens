@@ -267,6 +267,9 @@ def analyze(request):
         user_keyword = request.GET['query']
         paper_ids = get_paper_ids(user_keyword)
 
+        # 검색된 총 논문의 개수
+        total_papers_count = len(paper_ids) if paper_ids else 0 
+        
         # MariaDB 데이터베이스 연결
         db = mariadb.connect(**db_config)
         # 커서 생성
@@ -380,6 +383,7 @@ def analyze(request):
 
         # 그래프에 사용할 데이터 준비
         context = {
+            'total_papers_count': total_papers_count,
             'papers_count': papers_count,
             'author_data': author_data,
             'affiliation_data': affiliation_data,
