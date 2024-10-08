@@ -56,12 +56,19 @@ def search(request):
     order = request.GET.get('order', 'desc')
     sort_by = request.GET.get('sort_by', 'title')
     items_per_page = int(request.GET.get('items_per_page', 10)) # 기본값 10
-    
+    filter_type = request.GET.get('filter', 'paper')
+
+    # 뉴스 검색 부분
+    api_key = '2f963493ee124210ac91a3b54ebb3c5c'
+
+    if filter_type == 'author':
+        paper_ids = get_author_paper_ids(query)
+    else:
+        paper_ids = get_paper_ids(query)
+
     related_terms = []
     if query:
-        related_terms = top_5_related_words(query)
-    
-    paper_ids = get_paper_ids(query)
+        related_terms, most_related_word = top_5_related_words(query, paper_ids)
     
     # 기본 쿼리셋 생성
     papers = Paper.objects.filter(id__in=paper_ids)
@@ -148,18 +155,33 @@ def search(request):
     # 뉴스 검색 부분
     api_key = '2f963493ee124210ac91a3b54ebb3c5c'
     articles = []
-    if search_query:
-        if news_type == 'domestic':
-            url = f'https://newsapi.org/v2/everything?q={search_query}&language=ko&apiKey={api_key}'
-        else:
-            url = f'https://newsapi.org/v2/everything?q={search_query}&language=en&apiKey={api_key}'
 
-        response = requests.get(url)
-        news_data = response.json()
-        articles = news_data.get('articles', [])
-    
-    if request.headers.get('x-requested-with') == 'XMLHttpRequest':
-        return JsonResponse({'articles': articles})
+    if filter_type == 'author':
+        if search_query:
+            if news_type == 'domestic':
+                url = f'https://newsapi.org/v2/everything?q={most_related_word}&language=ko&apiKey={api_key}'
+            else:
+                url = f'https://newsapi.org/v2/everything?q={most_related_word}&language=en&apiKey={api_key}'
+
+            response = requests.get(url)
+            news_data = response.json()
+            articles = news_data.get('articles', [])
+        
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+            return JsonResponse({'articles': articles})
+    else:
+        if search_query:
+            if news_type == 'domestic':
+                url = f'https://newsapi.org/v2/everything?q={search_query}&language=ko&apiKey={api_key}'
+            else:
+                url = f'https://newsapi.org/v2/everything?q={search_query}&language=en&apiKey={api_key}'
+
+            response = requests.get(url)
+            news_data = response.json()
+            articles = news_data.get('articles', [])
+        
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+            return JsonResponse({'articles': articles})
     
     context = {
         'query': query,
@@ -184,8 +206,28 @@ def search(request):
     }
     return render(request, 'search.html', context)
 
+# 저자 이름으로 검색하는 엔진
+def get_author_paper_ids(user_keyword):
+    db = mariadb.connect(**db_config)
+    cursor = db.cursor(dictionary=True)
 
-# 검색 엔진
+    # 공백을 제거하고 비교하는 SQL 쿼리
+    cursor.execute("""
+    SELECT p.id
+    FROM paper p
+    JOIN paper_author pa ON p.id = pa.paper_id
+    JOIN author a ON pa.author_id = a.id
+    WHERE REPLACE(a.name, ' ', '') LIKE REPLACE(%s, ' ', '');
+    """, (f'%{user_keyword}%',))
+
+    paper_ids = [row['id'] for row in cursor.fetchall()]
+
+    cursor.close()
+    db.close()
+    return paper_ids
+
+
+# 논문 제목으로 검색하는 엔진
 def get_paper_ids(user_keyword):
     # MariaDB 데이터베이스 연결
     db = mariadb.connect(**db_config)
@@ -249,9 +291,9 @@ def get_abstracts(paper_ids):
 
     return data
 
-def top_5_related_words(query):
+def top_5_related_words(query, paper_ids):
     # 검색 엔진을 통해 논문 ID 가져오기
-    paper_ids = get_paper_ids(query)
+    # paper_ids = get_paper_ids(query)
 
     # 논문 ID를 사용하여 abstract 가져오기
     abstract_data = get_abstracts(paper_ids)
@@ -295,7 +337,11 @@ def top_5_related_words(query):
     # 유사도가 높은 상위 5개 단어 선택
     top_5_related_words = sorted(similarities, key=similarities.get, reverse=True)[:5]
 
-    return top_5_related_words
+    # 유사도가 가장 높은 단어 선택
+    most_related_word = max(similarities, key=similarities.get)
+
+    return top_5_related_words, most_related_word
+
 
 # 분석 페이지 그래프
 def analyze(request):
